@@ -21,12 +21,20 @@ from tradingagents.dataflows.vendors.fred import get_macro_data as get_fred_macr
 from tradingagents.dataflows.vendors.polymarket import (
     get_prediction_markets as get_polymarket_prediction_markets,
 )
-from tradingagents.dataflows.vendors.sec_edgar import (
-    get_balance_sheet as get_sec_edgar_balance_sheet,
-    get_cashflow as get_sec_edgar_cashflow,
-    get_income_statement as get_sec_edgar_income_statement,
+from .fred import get_macro_data as get_fred_macro_data
+from .knowledge_base import (
+    get_balance_sheet as get_kb_balance_sheet,
+    get_cashflow as get_kb_cashflow,
+    get_fundamentals as get_kb_fundamentals,
+    get_global_news as get_kb_global_news,
+    get_income_statement as get_kb_income_statement,
+    get_insider_transactions as get_kb_insider_transactions,
+    get_macro_indicators as get_kb_macro_indicators,
+    get_news as get_kb_news,
+    get_prediction_markets as get_kb_prediction_markets,
 )
-from tradingagents.dataflows.vendors.yahoo.fundamentals import (
+from .polymarket import get_prediction_markets as get_polymarket_prediction_markets
+from .y_finance import (
     get_balance_sheet as get_yfinance_balance_sheet,
     get_cashflow as get_yfinance_cashflow,
     get_fundamentals as get_yfinance_fundamentals,
@@ -86,6 +94,17 @@ TOOLS_CATEGORIES = {
     }
 }
 
+VENDOR_LIST = [
+    "yfinance",
+    "fred",
+    "polymarket",
+    "alpha_vantage",
+    # Pre-indexed background corpus (tradingagents/knowledge). Listed last so
+    # the "default" sentinel still prefers live vendors; using it DB-first is an
+    # explicit choice, e.g. data_vendors={"news_data": "knowledge_base,yfinance"}.
+    "knowledge_base",
+]
+
 # Optional enrichment categories. These add macro/event context to the news
 # analyst but are not core to a decision, so a vendor failure here degrades to a
 # sentinel instead of aborting the run (a bad LLM-supplied indicator, a missing
@@ -109,42 +128,51 @@ VENDOR_METHODS = {
     "get_fundamentals": {
         "alpha_vantage": get_alpha_vantage_fundamentals,
         "yfinance": get_yfinance_fundamentals,
+        "knowledge_base": get_kb_fundamentals,
     },
     "get_balance_sheet": {
         "alpha_vantage": get_alpha_vantage_balance_sheet,
         "sec_edgar": get_sec_edgar_balance_sheet,
         "yfinance": get_yfinance_balance_sheet,
+        "knowledge_base": get_kb_balance_sheet,
     },
     "get_cashflow": {
         "alpha_vantage": get_alpha_vantage_cashflow,
         "sec_edgar": get_sec_edgar_cashflow,
         "yfinance": get_yfinance_cashflow,
+        "knowledge_base": get_kb_cashflow,
     },
     "get_income_statement": {
         "alpha_vantage": get_alpha_vantage_income_statement,
         "sec_edgar": get_sec_edgar_income_statement,
         "yfinance": get_yfinance_income_statement,
+        "knowledge_base": get_kb_income_statement,
     },
     # news_data
     "get_news": {
         "alpha_vantage": get_alpha_vantage_news,
         "yfinance": get_news_yfinance,
+        "knowledge_base": get_kb_news,
     },
     "get_global_news": {
         "yfinance": get_global_news_yfinance,
         "alpha_vantage": get_alpha_vantage_global_news,
+        "knowledge_base": get_kb_global_news,
     },
     "get_insider_transactions": {
         "alpha_vantage": get_alpha_vantage_insider_transactions,
         "yfinance": get_yfinance_insider_transactions,
+        "knowledge_base": get_kb_insider_transactions,
     },
     # macro_data
     "get_macro_indicators": {
         "fred": get_fred_macro_data,
+        "knowledge_base": get_kb_macro_indicators,
     },
     # prediction_markets
     "get_prediction_markets": {
         "polymarket": get_polymarket_prediction_markets,
+        "knowledge_base": get_kb_prediction_markets,
     },
 }
 

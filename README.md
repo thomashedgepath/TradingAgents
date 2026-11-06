@@ -349,6 +349,8 @@ Per-ticker SQLite databases live at `~/.tradingagents/cache/checkpoints/<TICKER>
 ```bash
 tradingagents --checkpoint           # enable for this run
 tradingagents --clear-checkpoints    # reset before running
+tradingagents --checkpoint           # enable for this run
+tradingagents --clear-checkpoints    # reset before running
 ```
 
 ```python
@@ -370,13 +372,84 @@ result = run_backtest(["NVDA", "AAPL"], dates, config, selected_analysts=["marke
 print(summarize(result).render())
 ```
 
-From the CLI:
+## Background Research Corpus
+
+By default every analysis fetches its research live, so it only ever sees a
+recent window and pays the fetch latency on each run. The optional research
+corpus moves that work off the critical path: a companion Postgres service
+collects from the same vendors on a schedule, indexes what it collects, and the
+analysis reads material that is already there.
+
+It is entirely opt-in. With no database configured, TradingAgents behaves
+exactly as it did before.
+
+### Starting it
 
 ```bash
-tradingagents backtest NVDA,AAPL --start 2026-06-01 --end 2026-08-01 --every 7
+docker compose --profile knowledge up -d
 ```
 
-Each cell is scored on realized alpha against the instrument's regional benchmark, grouped by rating. A decision is entered at the first close after its date, because a run reads news published after that day's close. Your own memory log is never written to, and re-running the same grid with `run_id=result.run_id` skips the cells that already ran, so an interrupted sweep continues where it stopped.
+Set the watchlist in `.env` (this drives collection only — you can still analyse
+any ticker):
+
+```bash
+TRADINGAGENTS_KNOWLEDGE_WATCHLIST=NVDA,AAPL,MSFT,TSLA
+```
+
+The worker collects news, fundamentals and the three financial statements,
+insider transactions, global macro news, FRED macro series, and prediction
+markets. Each source has its own cadence — news hourly, fundamentals and insider
+filings daily, macro twice a day — defined in `tradingagents/knowledge/jobs.py`.
+
+Prices and technical indicators are deliberately never collected: exact price
+claims stay grounded in the live verified snapshot (see *Reproducibility*).
+
+Inspect it at any time:
+
+```bash
+docker compose run --rm knowledge-worker --status
+docker compose run --rm knowledge-worker --search "margin pressure" --ticker NVDA
+docker compose run --rm knowledge-worker --backfill   # ignore cadence, collect now
+```
+
+### How the agents use it
+
+**As a search tool.** The news and fundamentals analysts get `search_research`,
+which queries the whole corpus with hybrid retrieval — Postgres full-text search
+and pgvector semantic search, fused by reciprocal rank. Keyword search alone
+misses paraphrase; vector search alone is weak on tickers and numbers. Together
+they let an analyst ask how a story developed over months, which the live tools'
+short window cannot answer. The sentiment analyst receives a corpus block
+directly in its prompt, since it does not use tools.
+
+Every passage is stamped with its source and collection date, so agents treat
+stored material as history rather than as the current state.
+
+**As a data vendor.** The corpus also registers as an ordinary vendor, so you
+can serve normal tool calls from it and fall back to live sources on a miss:
+
+```python
+config = DEFAULT_CONFIG.copy()
+config["knowledge_db_url"] = "postgresql://tradingagents:tradingagents@localhost:5432/tradingagents"
+config["data_vendors"]["news_data"] = "knowledge_base,yfinance"
+```
+
+A stored payload older than `knowledge_max_age_days` (default 3) counts as a
+miss, so the live vendor runs instead of an analysis quietly using stale news.
+
+### Reading the corpus from the host
+
+```bash
+.venv/bin/pip install -e ".[knowledge,embeddings]"
+```
+
+Then publish the database port (see `knowledge-db` in `docker-compose.yml`) and
+set `TRADINGAGENTS_KNOWLEDGE_DB_URL`. The `[embeddings]` extra installs a local
+sentence-transformers model (no API cost, no data leaving the machine); without
+it everything still works, full-text only. Likewise, on a plain `postgres` image
+without pgvector the corpus runs full-text only rather than failing.
+
+See `.env.example` for the full set of `TRADINGAGENTS_KNOWLEDGE_*` settings.
 
 ## Reproducibility
 

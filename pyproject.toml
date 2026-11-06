@@ -39,21 +39,38 @@ dev = [
 # Amazon Bedrock support (AWS SigV4 auth + boto3). Optional so the core install
 # stays lean: pip install "tradingagents[bedrock]".
 bedrock = [
-    "langchain-aws>=1.7.9",
+    "langchain-aws>=1.5.0",
+]
+# Local web dashboard: pip install ".[dashboard]". Optional so the core install
+# stays lean for CLI-only and library users.
+dashboard = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+]
+# Background research corpus (tradingagents/knowledge): Postgres client only.
+# Enough to run the ingestion worker and to read the corpus during an analysis;
+# without the embeddings extra below, both run full-text only.
+knowledge = [
+    "psycopg[binary]>=3.2",
+    "psycopg-pool>=3.2",
+]
+# Local embedding model for the semantic half of the hybrid search. Split from
+# [knowledge] because it pulls in torch (~2GB): the worker image needs it, a
+# machine that only reads the corpus can skip it and lose only semantic recall.
+embeddings = [
+    "sentence-transformers>=3.0",
 ]
 
 [project.scripts]
 tradingagents = "cli.main:app"
-
-[tool.setuptools.dynamic]
-version = {attr = "tradingagents.__version__"}
+tradingagents-dashboard = "dashboard.server:main"
 
 [tool.setuptools.packages.find]
-include = ["tradingagents*", "cli*"]
+include = ["tradingagents*", "cli*", "dashboard*"]
 
 [tool.setuptools.package-data]
 cli = ["static/*"]
-tradingagents = ["assets/*.svg"]
+dashboard = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

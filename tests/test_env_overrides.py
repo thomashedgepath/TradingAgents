@@ -136,4 +136,36 @@ def test_unknown_env_var_is_ignored(monkeypatch):
         monkeypatch,
         TRADINGAGENTS_NONEXISTENT_KEY="oops",
     )
-    assert "nonexistent_key" not in config
+    assert "nonexistent_key" not in dc.DEFAULT_CONFIG
+
+
+@pytest.mark.unit
+def test_list_coercion_for_the_knowledge_watchlist(monkeypatch):
+    """List-valued keys take a comma-separated string so .env stays plain text."""
+    dc = _reload_with_env(
+        monkeypatch, TRADINGAGENTS_KNOWLEDGE_WATCHLIST="NVDA, AAPL ,MSFT,",
+    )
+    # Whitespace trimmed and the trailing empty item dropped, rather than
+    # producing a "" ticker that would fan out a job unit against nothing.
+    assert dc.DEFAULT_CONFIG["knowledge_watchlist"] == ["NVDA", "AAPL", "MSFT"]
+
+
+@pytest.mark.unit
+def test_knowledge_defaults_keep_the_corpus_disabled(monkeypatch):
+    dc = _reload_with_env(monkeypatch)
+    assert dc.DEFAULT_CONFIG["knowledge_db_url"] is None
+    assert dc.DEFAULT_CONFIG["knowledge_watchlist"] == []
+    assert dc.DEFAULT_CONFIG["knowledge_embed_dim"] == 384
+
+
+@pytest.mark.unit
+def test_knowledge_numeric_and_boolean_overrides(monkeypatch):
+    dc = _reload_with_env(
+        monkeypatch,
+        TRADINGAGENTS_KNOWLEDGE_TICK_SECONDS="60",
+        TRADINGAGENTS_KNOWLEDGE_MAX_AGE_DAYS="1",
+        TRADINGAGENTS_KNOWLEDGE_EMBEDDINGS="false",
+    )
+    assert dc.DEFAULT_CONFIG["knowledge_tick_seconds"] == 60
+    assert dc.DEFAULT_CONFIG["knowledge_max_age_days"] == 1
+    assert dc.DEFAULT_CONFIG["knowledge_embeddings_enabled"] is False

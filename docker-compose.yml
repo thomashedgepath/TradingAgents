@@ -8,6 +8,59 @@ services:
     tty: true
     stdin_open: true
 
+  # --- background research corpus (profile: knowledge) ---------------------
+  # Start with: docker compose --profile knowledge up -d
+  # The corpus is opt-in: without this profile nothing below runs and the
+  # analysis pipeline behaves exactly as before.
+
+  knowledge-db:
+    # pgvector image rather than stock postgres: the semantic half of the
+    # hybrid search needs the extension. On plain postgres the schema still
+    # builds and the corpus runs full-text only.
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: tradingagents
+      POSTGRES_PASSWORD: tradingagents
+      POSTGRES_DB: tradingagents
+    volumes:
+      - knowledge_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tradingagents -d tradingagents"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Not published by default: the corpus has no auth beyond these local
+    # credentials. Uncomment to query it from the host (psql, --search).
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+    profiles:
+      - knowledge
+
+  knowledge-worker:
+    build:
+      context: .
+      args:
+        EXTRAS: "[knowledge,embeddings]"
+    env_file:
+      - .env
+    environment:
+      TRADINGAGENTS_KNOWLEDGE_DB_URL: >-
+        postgresql://tradingagents:tradingagents@knowledge-db:5432/tradingagents
+      # Override in .env with your own tickers.
+      TRADINGAGENTS_KNOWLEDGE_WATCHLIST: ${TRADINGAGENTS_KNOWLEDGE_WATCHLIST:-}
+      # Cache the embedding model across restarts instead of re-downloading.
+      HF_HOME: /home/appuser/.cache/huggingface
+    entrypoint: ["python", "-m", "tradingagents.knowledge"]
+    volumes:
+      - tradingagents_data:/home/appuser/.tradingagents
+      - knowledge_model_cache:/home/appuser/.cache/huggingface
+    depends_on:
+      knowledge-db:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - knowledge
+
   ollama:
     image: ollama/ollama:latest
     volumes:
@@ -34,3 +87,5 @@ services:
 volumes:
   tradingagents_data:
   ollama_data:
+  knowledge_db_data:
+  knowledge_model_cache:

@@ -25,7 +25,13 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from tradingagents.agents.context import get_instrument_context_from_state, get_language_instruction
 from tradingagents.agents.post_screen import jev_screen
 from tradingagents.agents.schemas import SentimentReport, render_sentiment_report
-from tradingagents.agents.structured import (
+from tradingagents.agents.utils.agent_utils import (
+    get_instrument_context_from_state,
+    get_language_instruction,
+    get_news,
+    search_research,
+)
+from tradingagents.agents.utils.structured import (
     NO_EXTERNAL_TOOLS,
     bind_structured,
     invoke_structured_or_freetext,
@@ -38,6 +44,10 @@ from tradingagents.dataflows.vendors.reddit import (
     subreddits_for,
 )
 from tradingagents.dataflows.vendors.stocktwits import fetch_stocktwits_messages
+
+# How far back the corpus block reaches. Wider than the 7-day live window on
+# purpose: its job is to supply the trend the live sources cannot show.
+_CORPUS_LOOKBACK_DAYS = 45
 
 
 def _seven_days_back(trade_date: str) -> str:
@@ -64,15 +74,18 @@ def create_sentiment_analyst(llm):
         # returns a string (no exceptions surface from here), so the LLM
         # always sees something — either real data or a clear placeholder.
         news_block = get_news.func(ticker, start_date, end_date)
-        # Pass the analysis window so a historical run trims social posts to it
-        # instead of leaking today's chatter into a backtest (#1220).
-        screen = jev_screen(ticker)
-        stocktwits_block = fetch_stocktwits_messages(
-            ticker, limit=30, start_date=start_date, end_date=end_date, screen=screen
-        )
-        subreddits = subreddits_for(ticker)
-        reddit_block = fetch_reddit_posts(
-            ticker, subreddits, start_date=start_date, end_date=end_date, screen=screen
+        stocktwits_block = fetch_stocktwits_messages(ticker, limit=30)
+        reddit_block = fetch_reddit_posts(ticker)
+        # Fourth source: the background research corpus, reaching further back
+        # than the live 7-day window so the report can place current sentiment
+        # against how the narrative has been running. Pre-fetched like the rest
+        # rather than exposed as a tool, and it returns its own placeholder when
+        # no corpus is configured, so this stays a no-op for users without one.
+        corpus_block = search_research.func(
+            query=f"{ticker} sentiment narrative outlook risks catalysts",
+            ticker=ticker,
+            lookback_days=_CORPUS_LOOKBACK_DAYS,
+            limit=6,
         )
 
         system_message = _build_system_message(
@@ -82,7 +95,7 @@ def create_sentiment_analyst(llm):
             news_block=news_block,
             stocktwits_block=stocktwits_block,
             reddit_block=reddit_block,
-            subreddits=subreddits,
+            corpus_block=corpus_block,
         )
 
         prompt = ChatPromptTemplate.from_messages(
@@ -135,7 +148,7 @@ def _build_system_message(
     news_block: str,
     stocktwits_block: str,
     reddit_block: str,
-    subreddits: tuple[str, ...] = DEFAULT_SUBREDDITS,
+    corpus_block: str = "",
 ) -> str:
     """Assemble the sentiment-analyst system message with structured data blocks."""
     if subreddits == DEFAULT_SUBREDDITS:
@@ -169,6 +182,13 @@ Community discussion, without vote or comment counts. Subreddit character matter
 {reddit_block}
 <end_of_reddit>
 
+### Research corpus — previously collected coverage, past {_CORPUS_LOOKBACK_DAYS} days
+Background-indexed material reaching further back than the sources above. Each passage carries its own collection date. This is history, not current state: use it for trend and context, never as evidence of what is true today.
+
+<start_of_corpus>
+{corpus_block}
+<end_of_corpus>
+
 ## How to analyze this data (best practices)
 
 1. **Read the StockTwits Bullish/Bearish ratio as a leading retail-sentiment signal.** A 70/30 bullish/bearish split is moderately bullish; ≥90/10 may indicate over-extension and contrarian risk; 50/50 is uncertainty. Sample size matters — base rates on the actual message count, not percentages alone. A block headed "Screened by Jev" has had off-topic posts removed; its stance count is a classifier's read of every on-topic post fetched, labelled or not, of which the posts listed are a sample. Read it alongside the user tags.
@@ -183,7 +203,9 @@ Community discussion, without vote or comment counts. Subreddit character matter
 
 6. **Be honest about data limits.** If StockTwits returned only a handful of messages, or one or more sources returned an "<unavailable>" placeholder, the sentiment read is less robust — flag this explicitly in the `confidence` field and the narrative. If the sources are silent on a given subreddit, say so.
 
-7. **Identify catalysts and risks** that emerge across sources — news of upcoming earnings, product launches, competitive threats, macro headlines, etc.
+7. **Use the corpus for trajectory, not for facts.** Compare today's tone against the earlier coverage: is bullishness building, fading, or reversing? A sentiment shift relative to the corpus baseline is more informative than its absolute level. If the corpus block reports itself unavailable or empty, simply proceed with the three live sources — its absence is not a signal.
+
+8. **Identify catalysts and risks** that emerge across sources — news of upcoming earnings, product launches, competitive threats, macro headlines, etc.
 
 8. **Past sentiment is not predictive.** Frame your conclusions as signal for the trader to weigh alongside fundamentals and technicals, not as a price call.
 
